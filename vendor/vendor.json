@@ -1,0 +1,91 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "/gZe/SUmUc6dgHbRDofRsBTR19s=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/frame",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "VCDMk/5/pkVOQCBcATdCixGpk3s=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/godwarf",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "YGWZAtqkpg59+y0iCe2d9pFjj5c=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/line",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "bzKzyikFJewhchMt6awVR9B/okc=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/op",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "HQtf1o65biPT5hIbuQLKOTGqM0U=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/reader",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "j+wqqyt6QT2RI+Ini8exsY+pIFY=",
+			"path": "github.com/derekparker/delve/pkg/dwarf/util",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "Zx84VNxBFf9BnN9CnrQ/StvY16I=",
+			"path": "github.com/derekparker/delve/pkg/goversion",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "OYBYJW2zF7M6xisSTsn6buWAgpY=",
+			"path": "github.com/derekparker/delve/pkg/logflags",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "h548tv2gvEO5b2SrhAQxFLJk7Gs=",
+			"path": "github.com/derekparker/delve/pkg/proc",
+			"revision": "ff74e8f5a4a179b7e60688806107eade917226f4",
+			"revisionTime": "2018-08-03T15:17:01Z"
+		},
+		{
+			"checksumSHA1": "rdXBSMsIpX89xZS5rUwnBGZOe+Q=",
+			"path": "github.com/sirupsen/logrus",
+			"revision": "d329d24db4313262a3b0a24d8aeb1dc4bd294fb0",
+			"revisionTime": "2018-07-31T16:13:55Z"
+		},
+		{
+			"checksumSHA1": "8ZMJcRcmtefhPzJranqiii1eMIo=",
+			"path": "golang.org/x/arch/x86/x86asm",
+			"revision": "077ac972c2e48fdb75168a5ba36a387f0c72d8aa",
+			"revisionTime": "2017-09-28T18:48:49Z"
+		},
+		{
+			"checksumSHA1": "6U7dCaxxIMjf5V02iWgyAwppczw=",
+			"path": "golang.org/x/crypto/ssh/terminal",
+			"revision": "650f4a345ab4e5b245a3034b110ebc7299e68186",
+			"revisionTime": "2017-09-27T09:16:38Z"
+		},
+		{
+			"checksumSHA1": "osb18zDjd7/RMAMUuN3qP+w0ewE=",
+			"path": "golang.org/x/sys/unix",
+			"revision": "37707fdb30a5b38865cfb95e5aab41707daec7fd",
+			"revisionTime": "2018-02-02T13:35:31Z"
+		},
+		{
+			"checksumSHA1": "eQq+ZoTWPjyizS9XalhZwfGjQao=",
+			"path": "golang.org/x/sys/windows",
+			"revision": "37707fdb30a5b38865cfb95e5aab41707daec7fd",
+			"revisionTime": "2018-02-02T13:35:31Z"
+		}
+	],
+	"rootPath": "github.com/aarzilli/checkargorder"
+}
