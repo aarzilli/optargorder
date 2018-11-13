@@ -80,8 +80,12 @@ func main() {
 		sourceArgs := getSourceArgs(dclln)
 
 		_fn := (*Function)(unsafe.Pointer(&fn))
+		
+		pc := fn.PrologueEndPC()
+		
+		fmt.Printf("\tprologue ends at %#x (entry: %#x)\n", pc, fn.Entry)
 
-		dwarfArgs, ok := orderArgsDwarf(&bi, rdr, _fn.offset)
+		dwarfArgs, ok := orderArgsDwarf(&bi, rdr, _fn.offset, pc)
 		if !ok {
 			continue
 		}
@@ -113,7 +117,7 @@ type arg struct {
 	addr int64
 }
 
-func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset) ([]string, bool) {
+func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset, pc uint64) ([]string, bool) {
 	rdr.Seek(offset)
 	rdr.Next()
 
@@ -142,7 +146,7 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 			continue
 		}
 
-		addr, pieces, _, err := bi.Location(e, dwarf.AttrLocation, 0, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
+		addr, pieces, _, err := bi.Location(e, dwarf.AttrLocation, pc, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
 		if err != nil {
 			fmt.Printf("\targument error for %s: %v\n", name, err)
 			failed = true

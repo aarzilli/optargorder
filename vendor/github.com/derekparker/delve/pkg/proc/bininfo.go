@@ -379,6 +379,14 @@ func (bi *BinaryInfo) PCToFunc(pc uint64) *Function {
 	return nil
 }
 
+func (fn *Function) PrologueEndPC() uint64 {
+	pc, _, _, ok := fn.cu.lineInfo.PrologueEndPC(fn.Entry, fn.End)
+	if !ok {
+		return fn.Entry
+	}
+	return pc
+}
+
 func (bi *BinaryInfo) Close() error {
 	if bi.sepDebugCloser != nil {
 		bi.sepDebugCloser.Close()
