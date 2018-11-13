@@ -92,12 +92,14 @@ func main() {
 		countWithSortableArgs++
 
 		if len(dwarfArgs) != len(sourceArgs) {
-			panic("argument list mismatch")
+			fmt.Printf("\tERROR: ARGUMENT LIST MISMATCH\n")
+			continue
 		}
 
 		for i := range dwarfArgs {
 			if dwarfArgs[i] != sourceArgs[i] {
-				panic("argument order mismatch")
+				fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH\n")
+				break
 			}
 		}
 	}
@@ -132,10 +134,17 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 		if e.Tag != dwarf.TagFormalParameter {
 			continue
 		}
+		
+		name := e.Val(dwarf.AttrName).(string)
+		isvar := e.Val(dwarf.AttrVarParam).(bool)
+		
+		if isvar && len(name) > 0 && name[0] == '~' {
+			continue
+		}
 
 		addr, pieces, _, err := bi.Location(e, dwarf.AttrLocation, 0, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
 		if err != nil {
-			fmt.Printf("\targument error for %s: %v\n", e.Val(dwarf.AttrName), err)
+			fmt.Printf("\targument error for %s: %v\n", name, err)
 			failed = true
 			break
 		}
@@ -143,7 +152,7 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 			addr, pieces = coalescePieces(pieces)
 		}
 		if len(pieces) != 0 {
-			fmt.Printf("\ttoo many pieces %s\n", e.Val(dwarf.AttrName))
+			fmt.Printf("\ttoo many pieces %s\n", name)
 			failed = true
 			break
 		}
@@ -156,7 +165,7 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 	})
 
 	if failed {
-		fmt.Printf("\tARGS FAILED\n")
+		fmt.Printf("\tERROR: ARGS FAILED\n")
 		return nil, false
 	}
 
@@ -222,7 +231,7 @@ func (v *getSourceArgsVisitor) Visit(node ast.Node) ast.Visitor {
 			for _, name := range field.Names {
 				if name == nil {
 					v.out = append(v.out, fmt.Sprintf("~r%d", cnt))
-				} else {
+				} else if name.Name != "_" {
 					v.out = append(v.out, name.Name)
 				}
 				cnt++
