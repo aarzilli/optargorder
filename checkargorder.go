@@ -80,9 +80,9 @@ func main() {
 		sourceArgs := getSourceArgs(dclln)
 
 		_fn := (*Function)(unsafe.Pointer(&fn))
-		
+
 		pc := fn.PrologueEndPC()
-		
+
 		fmt.Printf("\tprologue ends at %#x (entry: %#x)\n", pc, fn.Entry)
 
 		dwarfArgs, ok := orderArgsDwarf(&bi, rdr, _fn.offset, pc)
@@ -138,11 +138,16 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 		if e.Tag != dwarf.TagFormalParameter {
 			continue
 		}
-		
+
 		name := e.Val(dwarf.AttrName).(string)
 		isvar := e.Val(dwarf.AttrVarParam).(bool)
-		
+
 		if isvar && len(name) > 0 && name[0] == '~' {
+			continue
+		}
+
+		// skip all return arguments
+		if isvar {
 			continue
 		}
 
@@ -226,7 +231,8 @@ func (v *getSourceArgsVisitor) Visit(node ast.Node) ast.Visitor {
 	if !ok {
 		return v
 	}
-	for _, lst := range []*ast.FieldList{fn.Recv, fn.Type.Params, fn.Type.Results} {
+	//for _, lst := range []*ast.FieldList{fn.Recv, fn.Type.Params , fn.Type.Results} {
+	for _, lst := range []*ast.FieldList{fn.Recv, fn.Type.Params /*skip all return arguments*/} {
 		if lst == nil {
 			continue
 		}
