@@ -40,7 +40,9 @@ func getFile(path string) []string {
 	}
 
 	buf, err := ioutil.ReadFile(path)
-	must(err)
+	if err != nil {
+		return nil
+	}
 	fileCache[path] = strings.Split(string(buf), "\n")
 	return fileCache[path]
 }
@@ -67,7 +69,12 @@ func main() {
 			continue
 		}
 
-		dclln := strings.TrimSpace(getFile(file)[line-1])
+		lines := getFile(file)
+		if len(lines) == 0 {
+			fmt.Printf("\tWARNING: SOURCE FILE NOT FOUND (%s in %s)\n", fn.Name, file)
+			continue
+		}
+		dclln := strings.TrimSpace(lines[line-1])
 
 		if !strings.Contains(dclln, "func ") {
 			continue
@@ -77,7 +84,11 @@ func main() {
 		fmt.Printf("\tDeclaration: %s\n", dclln)
 		count++
 
-		sourceArgs := getSourceArgs(dclln)
+		sourceArgs, err := getSourceArgs(dclln)
+		if err != nil {
+			fmt.Printf("\tWARNING: COULD NOT PARSE (%s in %s, err = %v)\n", fn.Name, file, err)
+			continue
+		}
 
 		_fn := (*Function)(unsafe.Pointer(&fn))
 
@@ -87,6 +98,7 @@ func main() {
 
 		dwarfArgs, ok := orderArgsDwarf(&bi, rdr, _fn.offset, pc)
 		if !ok {
+			fmt.Printf("\tERROR: ARGS FAILED (%s in %s)\n", fn.Name, file)
 			continue
 		}
 
@@ -95,14 +107,19 @@ func main() {
 
 		countWithSortableArgs++
 
-		if len(dwarfArgs) != len(sourceArgs) {
-			fmt.Printf("\tERROR: ARGUMENT LIST MISMATCH\n")
+		if len(dwarfArgs) > len(sourceArgs) {
+			fmt.Printf("\tERROR: MISSING SOURCE ARGS (%s in %s, dwarfArgs=%v, sourceArgs=%v)\n", fn.Name, file, dwarfArgs, sourceArgs)
+			continue
+		}
+
+		if len(dwarfArgs) < len(sourceArgs) {
+			fmt.Printf("\tERROR: MISSING DWARF ARGS (%s in %s, dwarfArgs=%v, sourceArgs=%v)\n", fn.Name, file, dwarfArgs, sourceArgs)
 			continue
 		}
 
 		for i := range dwarfArgs {
 			if dwarfArgs[i] != sourceArgs[i] {
-				fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH\n")
+				fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH (%s in %s)\n", fn.Name, file)
 				break
 			}
 		}
@@ -153,7 +170,7 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 
 		addr, pieces, _, err := bi.Location(e, dwarf.AttrLocation, pc, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
 		if err != nil {
-			fmt.Printf("\targument error for %s: %v\n", name, err)
+			fmt.Printf("\targument error for %s: %v", name, err)
 			failed = true
 			break
 		}
@@ -161,7 +178,7 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 			addr, pieces = coalescePieces(pieces)
 		}
 		if len(pieces) != 0 {
-			fmt.Printf("\ttoo many pieces %s\n", name)
+			fmt.Printf("\ttoo many pieces %s", name)
 			failed = true
 			break
 		}
@@ -174,7 +191,6 @@ func orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset
 	})
 
 	if failed {
-		fmt.Printf("\tERROR: ARGS FAILED\n")
 		return nil, false
 	}
 
@@ -205,7 +221,7 @@ func coalescePieces(pieces []op.Piece) (int64, []op.Piece) {
 	return 0, pieces
 }
 
-func getSourceArgs(dclln string) []string {
+func getSourceArgs(dclln string) ([]string, error) {
 	if dclln[len(dclln)-1] != '}' {
 		dclln = dclln + "\n}"
 	}
@@ -214,12 +230,14 @@ func getSourceArgs(dclln string) []string {
 
 	var fset token.FileSet
 	f, err := parser.ParseFile(&fset, "in", source, parser.AllErrors)
-	must(err)
+	if err != nil {
+		return nil, err
+	}
 
 	var v getSourceArgsVisitor
 	ast.Walk(&v, f)
 
-	return v.out
+	return v.out, nil
 }
 
 type getSourceArgsVisitor struct {
