@@ -1,4 +1,0 @@
-Watch go build
-
-- use symname shit for PC relative addresses
-- extend symname to resolve local variables
