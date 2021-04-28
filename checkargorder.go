@@ -63,6 +63,7 @@ type argsinfo struct {
 	missingSource int
 	wrongOrder    int
 	missingDwarf  int
+	duplicated    int
 }
 
 func main() {
@@ -181,7 +182,7 @@ that are described at the function's "stop at" PC.
 			if dwarfArgs[i] != sourceArgs[i] {
 				a.wrongOrder++
 				if verbose || errors {
-					fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH (%s in %s)\n", fn.Name, file)
+					fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH (%s in %s, %v vs %v)\n", fn.Name, file, dwarfArgs, sourceArgs)
 				}
 				break
 			}
@@ -200,11 +201,12 @@ that are described at the function's "stop at" PC.
 	// 	missingSource int
 	// 	wrongOrder    int
 	// 	missingDwarf  int
+	// 	duplicated    int
 	// }
 
-	fmt.Printf("nFunctions,argumentError,tooManyPieces,missingSource,wrongOrder,missingDwarf,1-totalErrors/nFunctions\n")
-	total := a.argumentError + a.tooManyPieces + a.missingSource + a.wrongOrder + a.missingDwarf
-	fmt.Printf("%d,%d,%d,%d,%d,%d,%f\n", a.nFunctions, a.argumentError, a.tooManyPieces, a.missingSource, a.wrongOrder, a.missingDwarf, 1.0 - float64(total)/float64(a.nFunctions))
+	fmt.Printf("nFunctions,argumentError,tooManyPieces,missingSource,wrongOrder,missingDwarf,duplicated,1-totalErrors/nFunctions\n")
+	total := a.argumentError + a.tooManyPieces + a.missingSource + a.wrongOrder + a.missingDwarf + a.duplicated
+	fmt.Printf("%d,%d,%d,%d,%d,%d,%d,%f\n", a.nFunctions, a.argumentError, a.tooManyPieces, a.missingSource, a.wrongOrder, a.missingDwarf, a.duplicated, 1.0 - float64(total)/float64(a.nFunctions))
 
 }
 
@@ -260,12 +262,22 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 			break
 		}
 		if len(pieces) != 0 {
-			addr, pieces = coalescePieces(pieces)
+			duplicatesSeen := false
+			addr, pieces, duplicatesSeen = coalescePieces(pieces)
+			if duplicatesSeen {
+				if verbose || errors {
+					fmt.Printf("\tduplicates seen %s, %v", name, pieces)
+				}
+				a.duplicated++
+				failed = true
+				break
+			}
+
 		}
 		if len(pieces) != 0 {
 			a.tooManyPieces++
 			if verbose || errors {
-				fmt.Printf("\ttoo many pieces %s", name)
+				fmt.Printf("\ttoo many pieces %s, %v", name, pieces)
 			}
 			failed = true
 			break
@@ -291,22 +303,34 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 	return r, true
 }
 
-func coalescePieces(pieces []op.Piece) (int64, []op.Piece) {
+func coalescePieces(pieces []op.Piece) (int64, []op.Piece, bool) {
+	duplicatesSeen := false
+	sort.SliceStable(pieces, func(i,j int) bool {return pieces[i].Addr < pieces[j].Addr} )
+	j := 1
+	for i := 1; i < len(pieces); i++ {
+		if pieces[i-1] == pieces[i] {
+			duplicatesSeen = true
+			continue
+		}
+		pieces[j] = pieces[i]
+		j++
+	}
+	pieces = pieces[:j]
 	r := append(make([]op.Piece, 0, len(pieces)), pieces[0])
 
 	for i := 1; i < len(pieces); i++ {
-		if r[len(r)-1].Addr+int64(r[len(r)-1].Size) == pieces[i].Addr && !r[len(r)-1].IsRegister && !pieces[i].IsRegister {
+		if r[len(r)-1].Addr+int64(r[len(r)-1].Size) == pieces[i].Addr { // && !r[len(r)-1].IsRegister && !pieces[i].IsRegister {
 			r[len(r)-1].Size += pieces[i].Size
 		} else {
 			r = append(r, pieces[i])
 		}
 	}
 
-	if len(r) == 1 && !r[0].IsRegister {
-		return r[0].Addr, nil
+	if len(r) == 1 { // && !r[0].IsRegister {
+		return r[0].Addr, nil, duplicatesSeen
 	}
 
-	return 0, pieces
+	return 0, pieces, duplicatesSeen
 }
 
 func getSourceArgs(dclln string) ([]string, error) {
