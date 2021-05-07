@@ -59,6 +59,8 @@ var errors bool
 type argsinfo struct {
 	nFunctions    int
 	argumentError int
+	mixedRegMem   int
+	regReuse      int
 	tooManyPieces int
 	missingSource int
 	wrongOrder    int
@@ -204,9 +206,9 @@ that are described at the function's "stop at" PC.
 	// 	duplicated    int
 	// }
 
-	fmt.Printf("nFunctions,argumentError,tooManyPieces,missingSource,wrongOrder,missingDwarf,duplicated,1-totalErrors/nFunctions\n")
-	total := a.argumentError + a.tooManyPieces + a.missingSource + a.wrongOrder + a.missingDwarf + a.duplicated
-	fmt.Printf("%d,%d,%d,%d,%d,%d,%d,%f\n", a.nFunctions, a.argumentError, a.tooManyPieces, a.missingSource, a.wrongOrder, a.missingDwarf, a.duplicated, 1.0 - float64(total)/float64(a.nFunctions))
+	fmt.Printf("nFunctions,argumentError,mixedRegMem,regReuse,tooManyPieces,missingSource,wrongOrder,missingDwarf,duplicated,1-totalErrors/nFunctions\n")
+	total := a.argumentError + a.mixedRegMem + a.regReuse + a.tooManyPieces + a.missingSource + a.wrongOrder + a.missingDwarf + a.duplicated
+	fmt.Printf("%d,%d,%d,%d,%d,%d,%d,%d,%d,%f\n", a.nFunctions, a.argumentError, a.tooManyPieces, a.mixedRegMem, a.regReuse, a.missingSource, a.wrongOrder, a.missingDwarf, a.duplicated, 1.0-float64(total)/float64(a.nFunctions))
 
 }
 
@@ -215,6 +217,38 @@ type arg struct {
 	addr int64
 }
 
+// orderArgsDwarf picks through the DIEs of a given DWARF subprogram
+// DIE looking for formal parameter DIEs, vets the location info for
+// the param, and returns an ordered list of parameter names to the caller
+// if the locations look good.
+//
+// The new Go 1.17 register ABI makes things more complicated here
+// (see https://go.googlesource.com/go/+/HEAD/src/cmd/compile/abi-internal.md
+// for more on how the register ABI works).
+//
+// In the original "stable" version 0 of the Go ABI, all incoming and
+// outgoing parameters are passed in memory, and the layout rules are
+// such that we can read in the locations for all the params, sort by
+// the frame offset in the location, and we have a properly-ordered
+// param list.
+//
+// With the new ABIInternal (register abi) in Go 1.17, the first few
+// parameters of a function are passed in registers, then whatever
+// doesn't fit in registers winds up being passed in memory (this
+// is an over-simplification; see the doc cited above for the actual
+// rules on when/how params are assigned to registers). The upshot
+// is that you can no longer use the "sort by frame offset" trick
+// across the board. It is worth noting that the DWARF standard
+// requires that a subprogram DIE's child formal params have to appear
+// in declaration order, so we should be able to just preserve the
+// order in which we see the parameter DIEs as we read the DWARF.
+//
+// Note that it is perfectly legal to have a mix of ABI0 and ABIInternal
+// functions within a given executable.
+//
+// The ABI rules dictate that a given parameter must be passed entirely
+// in registers or entirely in memory.
+//
 func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset, pc uint64) ([]string, bool) {
 	rdr.Seek(offset)
 	rdr.Next()
@@ -223,6 +257,7 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 
 	args := []arg{}
 	failed := false
+	regsUsed := make(map[uint64]bool)
 
 	for {
 		e, err := rdr.Next()
@@ -261,7 +296,15 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 			failed = true
 			break
 		}
-		if len(pieces) != 0 {
+		nr, errmsg := a.analyzeRegisterUse(pieces, regsUsed)
+		if errmsg != "" {
+			if verbose || errors {
+				fmt.Printf("\t%s %s, %+v", errmsg, name, pieces)
+			}
+			failed = true
+			break
+		}
+		if len(pieces) != 0 && nr == 0 {
 			duplicatesSeen := false
 			addr, pieces, duplicatesSeen = coalescePieces(pieces)
 			if duplicatesSeen {
@@ -274,7 +317,7 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 			}
 
 		}
-		if len(pieces) != 0 {
+		if len(pieces) != 0 && nr == 0 {
 			a.tooManyPieces++
 			if verbose || errors {
 				fmt.Printf("\ttoo many pieces %s, %v", name, pieces)
@@ -303,9 +346,45 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 	return r, true
 }
 
+// analyzeRegisterUse looks for register use within the
+// location piece list 'pieces', returning the number of
+// regs used. If it detects errors in the list (for example,
+// a mixture of registers and memory, or reuse of a
+// previously used register) it returns a non-empty
+// error string.
+//
+// NB: make sure this handles padding pieces, once Delve
+// has been upgraded to deal with them.
+func (a *argsinfo) analyzeRegisterUse(pieces []op.Piece, regsUsed map[uint64]bool) (int, string) {
+	nr := 0
+	nm := 0
+	for _, p := range pieces {
+		if p.IsRegister {
+			nr++
+			if regsUsed[p.RegNum] {
+				a.mixedRegMem++
+				return 0, "register reused within location"
+			}
+			regsUsed[p.RegNum] = true
+		} else {
+			nm++
+		}
+		if nr != 0 && nm != 0 {
+			a.regReuse++
+			return 0, "mix of register + memory seen"
+		}
+	}
+	return nr, ""
+}
+
+// coalescePiece examines a non-register location piece list, looking
+// for duplicates and trying to coalesce together the ranges within
+// the pieces. It returns the address of the final coalesced piece if
+// colaecsing worked, the final piece list, and a boolean indicating
+// whether duplicate pieces were detected.
 func coalescePieces(pieces []op.Piece) (int64, []op.Piece, bool) {
 	duplicatesSeen := false
-	sort.SliceStable(pieces, func(i,j int) bool {return pieces[i].Addr < pieces[j].Addr} )
+	sort.SliceStable(pieces, func(i, j int) bool { return pieces[i].Addr < pieces[j].Addr })
 	j := 1
 	for i := 1; i < len(pieces); i++ {
 		if pieces[i-1] == pieces[i] {
