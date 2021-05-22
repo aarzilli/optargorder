@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/go-delve/delve/pkg/dwarf/godwarf"
 	"github.com/go-delve/delve/pkg/dwarf/op"
 	"github.com/go-delve/delve/pkg/dwarf/reader"
 	"github.com/go-delve/delve/pkg/proc"
@@ -137,8 +138,12 @@ that are described at the function's "stop at" PC.
 
 		sourceArgs, err := getSourceArgs(dclln)
 		if err != nil {
-			fmt.Printf("\tWARNING: COULD NOT PARSE (%s in %s, err = %v)\n", fn.Name, file, err)
-			continue
+			// maybe it spilled on the next line?
+			sourceArgs, err = getSourceArgs(dclln + "\n" + strings.TrimSpace(lines[line]))
+			if err != nil {
+				fmt.Printf("\tWARNING: COULD NOT PARSE (%s in %s, err = %v)\n", fn.Name, file, err)
+				continue
+			}
 		}
 
 		_fn := (*Function)(unsafe.Pointer(&fn))
@@ -149,10 +154,17 @@ that are described at the function's "stop at" PC.
 			fmt.Printf("\tprologue ends at %#x (entry: %#x)\n", pc, fn.Entry)
 		}
 
-		dwarfArgs, ok := a.orderArgsDwarf(bi, rdr, _fn.offset, pc)
-		if !ok {
+		dwarfArgs := a.orderArgsDwarf(bi, rdr, _fn.offset)
+
+		if a.vetArgsLocations(bi, dwarfArgs, fn.Entry, true) {
 			if verbose || errors {
-				fmt.Printf("\tERROR: ARGS FAILED (%s in %s)\n", fn.Name, file)
+				fmt.Printf("\tERROR: ARGS FAILED AT ENTRY (%s in %s)\n", fn.Name, file)
+			}
+			continue
+		}
+		if a.vetArgsLocations(bi, dwarfArgs, pc, false) {
+			if verbose || errors {
+				fmt.Printf("\tERROR: ARGS FAILED AFTER PROLOGUE (%s in %s)\n", fn.Name, file)
 			}
 			continue
 		}
@@ -181,7 +193,7 @@ that are described at the function's "stop at" PC.
 		}
 
 		for i := range dwarfArgs {
-			if dwarfArgs[i] != sourceArgs[i] {
+			if dwarfArgs[i].Val(dwarf.AttrName).(string) != sourceArgs[i] {
 				a.wrongOrder++
 				if verbose || errors {
 					fmt.Printf("\tERROR: ARGUMENT ORDER MISMATCH (%s in %s, %v vs %v)\n", fn.Name, file, dwarfArgs, sourceArgs)
@@ -218,46 +230,14 @@ type arg struct {
 }
 
 // orderArgsDwarf picks through the DIEs of a given DWARF subprogram
-// DIE looking for formal parameter DIEs, vets the location info for
-// the param, and returns an ordered list of parameter names to the caller
-// if the locations look good.
-//
-// The new Go 1.17 register ABI makes things more complicated here
-// (see https://go.googlesource.com/go/+/HEAD/src/cmd/compile/abi-internal.md
-// for more on how the register ABI works).
-//
-// In the original "stable" version 0 of the Go ABI, all incoming and
-// outgoing parameters are passed in memory, and the layout rules are
-// such that we can read in the locations for all the params, sort by
-// the frame offset in the location, and we have a properly-ordered
-// param list.
-//
-// With the new ABIInternal (register abi) in Go 1.17, the first few
-// parameters of a function are passed in registers, then whatever
-// doesn't fit in registers winds up being passed in memory (this
-// is an over-simplification; see the doc cited above for the actual
-// rules on when/how params are assigned to registers). The upshot
-// is that you can no longer use the "sort by frame offset" trick
-// across the board. It is worth noting that the DWARF standard
-// requires that a subprogram DIE's child formal params have to appear
-// in declaration order, so we should be able to just preserve the
-// order in which we see the parameter DIEs as we read the DWARF.
-//
-// Note that it is perfectly legal to have a mix of ABI0 and ABIInternal
-// functions within a given executable.
-//
-// The ABI rules dictate that a given parameter must be passed entirely
-// in registers or entirely in memory.
-//
-func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset, pc uint64) ([]string, bool) {
+// DIE looking for formal parameter DIEs and returns them as a slice.
+// Formal arguments are required to appear in DWARF in the same order as
+// they are declared in the program (DWARFv4 section 3.3.4, page 55).
+func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offset dwarf.Offset) []godwarf.Entry {
 	rdr.Seek(offset)
 	rdr.Next()
 
-	const _cfa = 0x1000
-
-	args := []arg{}
-	failed := false
-	regsUsed := make(map[uint64]bool)
+	args := []godwarf.Entry{}
 
 	for {
 		e, err := rdr.Next()
@@ -287,33 +267,56 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 			continue
 		}
 
-		addr, pieces, _, err := bi.Location(e, dwarf.AttrLocation, pc, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
+		args = append(args, e)
+
+	}
+
+	return args
+}
+
+// vetArgsLocations vets the location info for the arguments 'arg' at
+// instruction address pc.
+//
+// If entryPoint is true it also checks that the locations respect the rules
+// of Go 1.17 register ABI.
+//
+// See:
+// https://go.googlesource.com/go/+/HEAD/src/cmd/compile/abi-internal.md
+// for more on how the register ABI works
+func (a *argsinfo) vetArgsLocations(bi *proc.BinaryInfo, args []godwarf.Entry, pc uint64, entryPoint bool) bool {
+	const _cfa = 0x1000
+
+	regsUsed := make(map[uint64]bool)
+
+	for _, e := range args {
+		name := e.Val(dwarf.AttrName).(string)
+		_, pieces, _, err := bi.Location(e, dwarf.AttrLocation, pc, op.DwarfRegisters{CFA: _cfa, FrameBase: _cfa})
 		if err != nil {
 			a.argumentError++
 			if verbose || errors {
 				fmt.Printf("\targument error for %s: %v", name, err)
 			}
-			failed = true
-			break
+			return false
+		}
+		if !entryPoint {
+			continue
 		}
 		nr, errmsg := a.analyzeRegisterUse(pieces, regsUsed)
 		if errmsg != "" {
 			if verbose || errors {
 				fmt.Printf("\t%s %s, %+v", errmsg, name, pieces)
 			}
-			failed = true
-			break
+			return false
 		}
 		if len(pieces) != 0 && nr == 0 {
 			duplicatesSeen := false
-			addr, pieces, duplicatesSeen = coalescePieces(pieces)
+			_, pieces, duplicatesSeen = coalescePieces(pieces)
 			if duplicatesSeen {
 				if verbose || errors {
 					fmt.Printf("\tduplicates seen %s, %v", name, pieces)
 				}
 				a.duplicated++
-				failed = true
-				break
+				return false
 			}
 
 		}
@@ -322,28 +325,11 @@ func (a *argsinfo) orderArgsDwarf(bi *proc.BinaryInfo, rdr *reader.Reader, offse
 			if verbose || errors {
 				fmt.Printf("\ttoo many pieces %s, %v", name, pieces)
 			}
-			failed = true
-			break
+			return false
 		}
-
-		args = append(args, arg{e.Val(dwarf.AttrName).(string), addr})
 	}
 
-	sort.Slice(args, func(i, j int) bool {
-		return args[i].addr < args[j].addr
-	})
-
-	if failed {
-		return nil, false
-	}
-
-	r := make([]string, len(args))
-
-	for i := range args {
-		r[i] = args[i].name
-	}
-
-	return r, true
+	return true
 }
 
 // analyzeRegisterUse looks for register use within the
